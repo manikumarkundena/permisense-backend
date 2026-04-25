@@ -3,7 +3,18 @@ import { GoogleGenAI } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
+// 🔥 TEXT PREPROCESSING (IMPORTANT)
+function preprocess(text: string) {
+  return text
+    .replace(/\s+/g, ' ')
+    .replace(/\n/g, ' ')
+    .trim()
+    .slice(0, 10000); // ✅ sweet spot for consistency + performance
+}
+
 export class AIService {
+
+  // 🔥 POLICY ANALYSIS
   static async analyzePolicyWithAI(text: string, ruleResult: any) {
     if (!process.env.GEMINI_API_KEY) {
       console.warn("GEMINI_API_KEY not found. Using fallback.");
@@ -11,42 +22,98 @@ export class AIService {
     }
 
     try {
+      const cleanText = preprocess(text);
+
       const prompt = `
-        As a Cyber Security Legal Expert, analyze this privacy policy text.
-        The rule engine has already detected a risk score of ${ruleResult.riskScore}/100 (${ruleResult.riskLevel}).
-        
-        TEXT BLOB: ${text.substring(0, 4000)}
-        
-        Generate a JSON response with:
-        {
-          "summary": "concise risk summary",
-          "highlightedRisks": ["key risk 1", "key risk 2"],
-          "categories": {
-            "sharing": "analysis of data sharing",
-            "retention": "analysis of data retention",
-            "sensitiveUsage": "analysis of sensitive usage"
-          },
-          "recommendation": "specific user action"
-        }
-      `;
+You are an advanced Cybersecurity & Privacy Risk Analyst.
+
+Your job is to analyze privacy policies like a professional security auditor.
+
+---------------------------------
+CONTEXT
+---------------------------------
+Rule Engine Output:
+- Risk Score: ${ruleResult.riskScore}/100
+- Risk Level: ${ruleResult.riskLevel}
+
+---------------------------------
+TASK
+---------------------------------
+Analyze the privacy policy and identify REAL security risks.
+
+Focus ONLY on:
+- Third-party data sharing
+- Data retention practices
+- Sensitive data usage (location, biometrics, contacts, etc.)
+- Hidden or vague legal language
+
+Ignore:
+- navigation text
+- formatting noise
+- irrelevant legal boilerplate
+
+Ensure your analysis logically aligns with the provided risk score and risk level.
+
+---------------------------------
+INPUT TEXT
+---------------------------------
+${cleanText}
+
+---------------------------------
+STRICT OUTPUT FORMAT (JSON ONLY)
+---------------------------------
+{
+  "summary": "A sharp, expert-level risk summary (1–2 lines)",
+  "highlightedRisks": [
+    "Specific real-world risk 1",
+    "Specific real-world risk 2"
+  ],
+  "categories": {
+    "sharing": "Clear insight about data sharing risk",
+    "retention": "Insight about retention (mention duration if present)",
+    "sensitiveUsage": "Insight about sensitive data usage"
+  },
+  "recommendation": "Actionable user advice (clear and practical)"
+}
+
+---------------------------------
+CRITICAL RULES
+---------------------------------
+- Be precise and non-generic
+- Sound like a cybersecurity auditor
+- Keep outputs consistent for similar inputs
+- Do NOT hallucinate
+- Do NOT exaggerate beyond given text
+`;
 
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: prompt,
         config: {
-          systemInstruction: "You are a specialized AI Cyber Security Analyst. Provide structured, technically accurate JSON output.",
+          systemInstruction:
+            "You are a strict cybersecurity auditor AI. Provide precise, consistent, and structured risk analysis.",
           responseMimeType: "application/json",
+          temperature: 0.2 // 🔥 ensures consistency
         }
       });
 
       const jsonText = response.text || "{}";
-      return JSON.parse(jsonText);
+
+      // ✅ SAFE PARSE (IMPORTANT)
+      try {
+        return JSON.parse(jsonText);
+      } catch {
+        console.warn("AI returned invalid JSON, using fallback.");
+        return this.getPolicyFallback(ruleResult.riskLevel);
+      }
+
     } catch (error) {
       console.error("Gemini AI Policy Analysis failed:", error);
       return this.getPolicyFallback(ruleResult.riskLevel);
     }
   }
 
+  // 🔥 PERMISSION EXPLANATION
   static async explainPermissionsWithAI(appName: string, permissions: string[], ruleResult: any) {
     if (!process.env.GEMINI_API_KEY) {
       return this.getFallbackExplanation(ruleResult.riskLevel);
@@ -54,25 +121,34 @@ export class AIService {
 
     try {
       const prompt = `
-        Explain why the application "${appName}" requesting permissions [${permissions.join(', ')}] might be risky.
-        Backend Rule Score: ${ruleResult.riskScore}
-        Backend Risk Level: ${ruleResult.riskLevel}
-        
-        Provide a simple human explanation and a clear security recommendation.
-      `;
+Explain why the application "${appName}" requesting permissions [${permissions.join(', ')}] might be risky.
+
+Backend Risk Score: ${ruleResult.riskScore}
+Risk Level: ${ruleResult.riskLevel}
+
+Give:
+- Simple explanation
+- Real-world risk implication
+- Clear recommendation
+`;
 
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: prompt,
+        config: {
+          temperature: 0.2
+        }
       });
 
       return response.text || this.getFallbackExplanation(ruleResult.riskLevel);
+
     } catch (error) {
       console.error("Gemini AI Permission Explanation failed:", error);
       return this.getFallbackExplanation(ruleResult.riskLevel);
     }
   }
 
+  // 🔥 FALLBACK POLICY
   private static getPolicyFallback(riskLevel: RiskLevel) {
     return {
       summary: this.getFallbackExplanation(riskLevel),
@@ -86,12 +162,13 @@ export class AIService {
     };
   }
 
+  // 🔥 FALLBACK TEXT
   static getFallbackExplanation(riskLevel: RiskLevel) {
     const fallbacks = {
-      [RiskLevel.CRITICAL]: "CRITICAL THREAT: System patterns suggest immediate data exfiltration risk. Manual intervention required.",
-      [RiskLevel.HIGH]: "HIGH RISK: Unusual permission combination detected. Privacy leakage is probable.",
-      [RiskLevel.MEDIUM]: "MEDIUM RISK: Data sharing clauses detected. Usage verification recommended.",
-      [RiskLevel.LOW]: "System analysis suggests clear operations."
+      [RiskLevel.CRITICAL]: "CRITICAL: High probability of sensitive data misuse detected.",
+      [RiskLevel.HIGH]: "HIGH RISK: Multiple privacy concerns detected.",
+      [RiskLevel.MEDIUM]: "MEDIUM RISK: Some data-sharing or retention concerns present.",
+      [RiskLevel.LOW]: "LOW RISK: No major threats detected."
     };
     return fallbacks[riskLevel] || "Analysis complete.";
   }
