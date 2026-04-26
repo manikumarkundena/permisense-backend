@@ -1,7 +1,7 @@
 export const config = {
   appName: 'PermiSense AI',
   version: '1.0.4',
-  port: 3000,
+  port: process.env.PORT || 3001,
   geminiModel: 'gemini-3-flash-preview',
   riskThresholds: {
     critical: 85,

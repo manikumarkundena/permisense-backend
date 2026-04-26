@@ -1,7 +1,14 @@
 import { RiskLevel } from '../models/types.ts';
 import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+let ai: any = null;
+try {
+  if (process.env.GEMINI_API_KEY) {
+    ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  }
+} catch (e) {
+  console.warn("Could not initialize GoogleGenAI:", e);
+}
 
 // 🔥 TEXT PREPROCESSING (IMPORTANT)
 function preprocess(text: string) {
@@ -116,42 +123,57 @@ CRITICAL RULES
   // 🔥 PERMISSION EXPLANATION
   static async explainPermissionsWithAI(appName: string, permissions: string[], ruleResult: any) {
     if (!process.env.GEMINI_API_KEY) {
-      return this.getFallbackExplanation(ruleResult.riskLevel);
+      return this.getFallbackExplanation(ruleResult.riskLevel, ruleResult);
     }
 
     try {
       const prompt = `
-Explain why the application "${appName}" requesting permissions [${permissions.join(', ')}] might be risky.
+You are an expert Cybersecurity AI.
+Analyze why the application "${appName}" requesting these permissions might be risky: [${permissions.join(', ')}]
 
-Backend Risk Score: ${ruleResult.riskScore}
-Risk Level: ${ruleResult.riskLevel}
+Backend Rule Engine Analysis:
+- Risk Score: ${ruleResult.riskScore}
+- Risk Level: ${ruleResult.riskLevel}
+- Found Reasons: ${ruleResult.reasons.join('; ')}
+- Misuse Scenarios: ${ruleResult.misuseScenarios.join('; ')}
 
-Give:
-- Simple explanation
-- Real-world risk implication
-- Clear recommendation
+Return a strict JSON response with the following format:
+{
+  "explanation": "Simple 1-2 sentence explanation of the overall risk",
+  "cause": "What specific permission combination caused this risk?",
+  "recommendation": "Clear recommendation on how the user should fix or mitigate this"
+}
 `;
 
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: prompt,
         config: {
-          temperature: 0.2
+          systemInstruction: "You are a cybersecurity AI. Return only valid JSON.",
+          responseMimeType: "application/json",
+          temperature: 0.3
         }
       });
 
-      return response.text || this.getFallbackExplanation(ruleResult.riskLevel);
+      const jsonText = response.text || "{}";
+
+      try {
+        return JSON.parse(jsonText);
+      } catch {
+        console.warn("AI returned invalid JSON, using fallback.");
+        return this.getFallbackExplanation(ruleResult.riskLevel, ruleResult);
+      }
 
     } catch (error) {
       console.error("Gemini AI Permission Explanation failed:", error);
-      return this.getFallbackExplanation(ruleResult.riskLevel);
+      return this.getFallbackExplanation(ruleResult.riskLevel, ruleResult);
     }
   }
 
   // 🔥 FALLBACK POLICY
   private static getPolicyFallback(riskLevel: RiskLevel) {
     return {
-      summary: this.getFallbackExplanation(riskLevel),
+      summary: this.getFallbackText(riskLevel),
       highlightedRisks: ["Structural scan identified potential vulnerabilities."],
       categories: {
         sharing: "Manual verification required for third-party clauses.",
@@ -162,8 +184,19 @@ Give:
     };
   }
 
+  // 🔥 FALLBACK EXPLANATION (JSON)
+  static getFallbackExplanation(riskLevel: RiskLevel, ruleResult?: any) {
+    return {
+      explanation: this.getFallbackText(riskLevel),
+      cause: ruleResult?.reasons?.join(' ') || "Generic permission request pattern.",
+      recommendation: riskLevel === RiskLevel.CRITICAL || riskLevel === RiskLevel.HIGH 
+        ? "Revoke dangerous permissions immediately." 
+        : "Review permissions and proceed with caution."
+    };
+  }
+
   // 🔥 FALLBACK TEXT
-  static getFallbackExplanation(riskLevel: RiskLevel) {
+  static getFallbackText(riskLevel: RiskLevel) {
     const fallbacks = {
       [RiskLevel.CRITICAL]: "CRITICAL: High probability of sensitive data misuse detected.",
       [RiskLevel.HIGH]: "HIGH RISK: Multiple privacy concerns detected.",

@@ -9,7 +9,7 @@ router.post('/analyze-permissions', async (req, res) => {
   if (!appName) return res.status(400).json({ error: 'App name required' });
 
   const result = await SecurityService.analyzeAppPermissions(appName, permissions || []);
-  securityLogger.log(`Permission scan for ${appName}. Risk: ${result.riskLevel}`, result.riskLevel);
+  securityLogger.log(`Permission scan for ${appName}. Risk: ${result.riskLevel}`, result.riskLevel, 'AI', result.cause);
   
   res.json(result);
 });

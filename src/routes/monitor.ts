@@ -9,11 +9,13 @@ router.get('/logs', (req, res) => {
 });
 
 router.post('/monitor-behavior', (req, res) => {
-  const { appId, activity } = req.body;
+  const { appId, activity, online, network, deviceMemory, events } = req.body;
   if (!appId) return res.status(400).json({ error: 'App ID required' });
 
-  const result = SecurityService.monitorBehavior(appId, activity || []);
-  securityLogger.log(`Behavior monitor update for ${appId}`, result.riskLevel);
+  const data = { appId, activity, online, network, deviceMemory, events };
+  const result = SecurityService.monitorBehavior(appId, data);
+  
+  securityLogger.log(`Behavior monitor update for ${appId}`, result.riskLevel, 'TELEMETRY', result.cause);
   
   res.json(result);
 });
